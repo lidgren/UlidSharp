@@ -34,12 +34,12 @@ namespace UlidSharp
 
 		public static void Create(DateTimeOffset dto, ref ulong rndState, out Ulid value)
 		{
-			var time = (ulong)dto.ToUnixTimeMilliseconds();
+			var time = dto.ToUnixTimeMilliseconds();
 #if DEBUG
 			if (time < 0)
 				throw new ArgumentException("Date too old");
 #endif
-			value.High = (time << 16) | (NextUInt64(ref rndState) & 0xFFFF);
+			value.High = ((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF);
 			value.Low = NextUInt64(ref rndState);
 		}
 
