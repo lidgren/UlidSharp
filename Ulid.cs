@@ -1,75 +1,95 @@
 ﻿using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace UlidSharp
 {
-	public struct Ulid : IEquatable<Ulid>, IComparable<Ulid>
+	[StructLayout(LayoutKind.Sequential)]
+	public readonly struct Ulid : IEquatable<Ulid>, IComparable<Ulid>
 	{
-		public static readonly Ulid Empty = new Ulid();
+		public const int SizeInBytes = 16;
 
-		public ulong Low;
-		public ulong High;
+		public static readonly Ulid Empty = new Ulid(0, 0);
+
+		private static readonly long s_timeOffset = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (long)TicksToMilliSeconds(Stopwatch.GetTimestamp());
+
+		public readonly ulong Low;
+		public readonly ulong High;
 
 		private const string ENCODE = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 		private static readonly byte[] DECODE = new byte[] { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 255, 255, 255, 255, 255, 255, 255, 10, 11, 12, 13, 14, 15, 16, 17, 255, 18, 19, 255, 20, 21, 255, 22, 23, 24, 25, 26, 255, 27, 28, 29, 30, 31, 255, 255, 255, 255, 255, 255, 10, 11, 12, 13, 14, 15, 16, 17, 255, 18, 19, 255, 20, 21, 255, 22, 23, 24, 25, 26, 255, 27, 28, 29, 30, 31 };
 
-		public static Ulid Create()
+		public Ulid(ulong low, ulong high)
 		{
-			Ulid value;
-			Create(DateTimeOffset.UtcNow, ref s_rndState, out value);
-			return value;
+			Low = low;
+			High = high;
 		}
 
-		public static void Create(out Ulid value)
-		{
-			Create(DateTimeOffset.UtcNow, ref s_rndState, out value);
-		}
-
-		public static void Create(DateTimeOffset dto, out Ulid value)
-		{
-			Create(dto, ref s_rndState, out value);
-		}
-
-		public static void Create(DateTimeOffset dto, ref ulong rndState, out Ulid value)
-		{
-			var time = dto.ToUnixTimeMilliseconds();
-#if DEBUG
-			if (time < 0)
-				throw new ArgumentException("Date too old");
-#endif
-			value.High = ((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF);
-			value.Low = NextUInt64(ref rndState);
-		}
-
-		public static void Create(ReadOnlySpan<byte> fromBytes, out Ulid value)
+		public Ulid(ReadOnlySpan<byte> fromBytes)
 		{
 #if DEBUG
 			if (fromBytes.Length < 16)
 				throw new ArgumentException("bytes too few");
 #endif
-			// value.High = ByteUtils.ReadUInt64(fromBytes);
-			value.High = (ulong)fromBytes[0] |
-				((ulong)fromBytes[1] << 8) |
-				((ulong)fromBytes[2] << 16) |
-				((ulong)fromBytes[3] << 24) |
-				((ulong)fromBytes[4] << 32) |
-				((ulong)fromBytes[5] << 40) |
-				((ulong)fromBytes[6] << 48) |
-				((ulong)fromBytes[7] << 56);
-
-			value.Low = (ulong)fromBytes[8] |
-				((ulong)fromBytes[9] << 8) |
-				((ulong)fromBytes[10] << 16) |
-				((ulong)fromBytes[11] << 24) |
-				((ulong)fromBytes[12] << 32) |
-				((ulong)fromBytes[13] << 40) |
-				((ulong)fromBytes[14] << 48) |
-				((ulong)fromBytes[15] << 56);
+			High = BinaryPrimitives.ReadUInt64LittleEndian(fromBytes.Slice(0, 8));
+			Low = BinaryPrimitives.ReadUInt64LittleEndian(fromBytes.Slice(8, 8));
 		}
 
-		public static void Create(ReadOnlySpan<char> fromString, out Ulid value)
+		public static Ulid NewUlid()
+		{
+			var time = s_timeOffset + TicksToMilliSeconds(Stopwatch.GetTimestamp());
+			return new Ulid(
+				NextUInt64(ref s_rndState),
+				((ulong)time << 16) | (NextUInt64(ref s_rndState) & 0xFFFF)
+			);
+		}
+
+		public static Ulid NewUlid(ref ulong rndState)
+		{
+			var time = s_timeOffset + TicksToMilliSeconds(Stopwatch.GetTimestamp());
+			return new Ulid(
+				NextUInt64(ref rndState),
+				((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF)
+			);
+		}
+
+		public Ulid(long ticks)
+		{
+			var time = s_timeOffset + TicksToMilliSeconds(ticks);
+			Low = NextUInt64(ref s_rndState);
+			High = ((ulong)time << 16) | (NextUInt64(ref s_rndState) & 0xFFFF);
+		}
+
+		public Ulid(long ticks, ref ulong rndState)
+		{
+			var time = s_timeOffset + TicksToMilliSeconds(ticks);
+			Low = NextUInt64(ref rndState);
+			High = ((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF);
+		}
+
+		private static double TicksToMilliSeconds(long stopwatchTicks)
+		{
+			return (double)stopwatchTicks * s_dInvMilliFreq;
+		}
+
+		public static void Create(in DateTimeOffset dto, out Ulid value)
+		{
+			Create(dto, ref s_rndState, out value);
+		}
+
+		public static void Create(in DateTimeOffset dto, ref ulong rndState, out Ulid value)
+		{
+			var time = dto.ToUnixTimeMilliseconds();
+			value = new Ulid(
+				NextUInt64(ref rndState),
+				((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF)
+			);
+		}
+
+		public Ulid(ReadOnlySpan<char> fromString)
 		{
 #if DEBUG
 			if (fromString.Length < 26)
@@ -114,8 +134,8 @@ namespace UlidSharp
 				((ulong)DECODE[fromString[24]] << 5) |
 				((ulong)DECODE[fromString[25]]);
 
-			value.Low = low;
-			value.High = high;
+			Low = low;
+			High = high;
 		}
 
 		public void AsString(Span<char> into)
@@ -151,6 +171,7 @@ namespace UlidSharp
 			into[25] = ENCODE[(int)(Low & 0b11111)];
 		}
 
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public void AsBytes(Span<byte> into)
 		{
 			into[0] = (byte)High;
@@ -171,6 +192,7 @@ namespace UlidSharp
 			into[15] = (byte)(Low >> 56);
 		}
 
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public void GetTime(out DateTimeOffset time)
 		{
 			time = DateTimeOffset.FromUnixTimeMilliseconds((long)(High >> 16));
@@ -178,11 +200,13 @@ namespace UlidSharp
 
 		public override string ToString()
 		{
-			var data = new char[26];
-			AsString(data.AsSpan<char>());
-			return new string(data);
+			return String.Create<Ulid>(26, this, (span, ulid) =>
+			{
+				ulid.AsString(span);
+			});
 		}
 
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public override bool Equals(object obj)
 		{
 			if (obj == null || !(obj is Ulid))
@@ -191,53 +215,68 @@ namespace UlidSharp
 			return other.Low == Low && other.High == High;
 		}
 
-		public override int GetHashCode()
-		{
-			// murmur2 hash
-			var hash = 0xc6a4a7935bd1e995ul;
-			var low = Low * 0xc6a4a7935bd1e995ul;
-			low ^= low >> 47;
-			low *= 0xc6a4a7935bd1e995ul;
-			hash ^= low;
-			hash *= 0xc6a4a7935bd1e995ul;
-			var high = High * 0xc6a4a7935bd1e995ul;
-			high ^= high >> 47;
-			high *= 0xc6a4a7935bd1e995ul;
-			hash ^= high;
-			hash *= 0xc6a4a7935bd1e995ul;
-
-			// final mix
-			hash ^= hash >> 47;
-			hash *= 0xc6a4a7935bd1e995ul;
-			hash ^= hash >> 47;
-
-			// fold
-			return (int)((uint)hash ^ (uint)(hash >> 32));
-
-			//return (int)(
-			//	(uint)Low ^
-			//	(uint)(Low >> 32) ^
-			//	(uint)High ^
-			//	(uint)(High >> 32)
-			//);
-		}
-
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public bool Equals(Ulid other)
 		{
 			return other.Low == Low && other.High == High;
 		}
 
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public bool Equals(in Ulid other)
+		{
+			return other.Low == Low && other.High == High;
+		}
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static bool operator == (in Ulid x, in Ulid y)
+		{
+			return (x.Low == y.Low && x.High == y.High);
+		}
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static bool operator != (in Ulid x, in Ulid y)
+		{
+			return (x.Low != y.Low || x.High != y.High);
+		}
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public override int GetHashCode()
+		{
+			// Low is all random bits; can be used verbatim
+			// But the time part of High needs to be mixed a bit
+			unchecked
+			{
+				// simple mixing since we're xoring with random bits anyway
+				ulong mixed = High;
+				mixed ^= mixed >> 47;
+				mixed *= 0xc6a4a7935bd1e995ul;
+				mixed ^= mixed >> 47;
+
+				ulong hash = mixed ^ Low;
+
+				// xor fold to 32 bits
+				return (int)((uint)hash ^ (uint)(hash >> 32));
+			}
+		}
+
 		public int CompareTo(Ulid other)
 		{
-			if (High == other.High)
-				return Comparer<ulong>.Default.Compare(Low, other.Low);
-			return Comparer<ulong>.Default.Compare(High, other.High);
+			if (High < other.High)
+				return -1;
+			if (High > other.High)
+				return 1;
+			if (Low < other.Low)
+				return -1;
+			if (Low > other.Low)
+				return 1;
+			return 0;
 		}
 
 		//
 		// PRNG based on XorShift64*
 		//
 		private static ulong s_rndState;
+		private static double s_dInvMilliFreq;
 
 		static Ulid()
 		{
@@ -251,6 +290,8 @@ namespace UlidSharp
 			var h4 = Environment.TickCount;
 			var h5 = Stopwatch.GetTimestamp();
 			s_rndState = (ulong)h1 ^ (ulong)h2 ^ (ulong)h3 ^ (ulong)h4 ^ (ulong)h5;
+
+			s_dInvMilliFreq = 1000.0 / (double)Stopwatch.Frequency;
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
