@@ -38,16 +38,13 @@ namespace UlidSharp
 			Low = BinaryPrimitives.ReadUInt64LittleEndian(fromBytes.Slice(8, 8));
 		}
 
-		public static Ulid NewUlid()
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static Ulid Create()
 		{
-			var time = s_timeOffset + TicksToMilliSeconds(Stopwatch.GetTimestamp());
-			return new Ulid(
-				NextUInt64(ref s_rndState),
-				((ulong)time << 16) | (NextUInt64(ref s_rndState) & 0xFFFF)
-			);
+			return Create(ref s_rndState);
 		}
 
-		public static Ulid NewUlid(ref ulong rndState)
+		public static Ulid Create(ref ulong rndState)
 		{
 			var time = s_timeOffset + TicksToMilliSeconds(Stopwatch.GetTimestamp());
 			return new Ulid(
@@ -56,40 +53,38 @@ namespace UlidSharp
 			);
 		}
 
-		public Ulid(long ticks)
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static Ulid Create(long stopwatchTicks)
 		{
-			var time = s_timeOffset + TicksToMilliSeconds(ticks);
-			Low = NextUInt64(ref s_rndState);
-			High = ((ulong)time << 16) | (NextUInt64(ref s_rndState) & 0xFFFF);
+			return Create(stopwatchTicks, ref s_rndState);
 		}
 
-		public Ulid(long ticks, ref ulong rndState)
+		public static Ulid Create(long stopwatchTicks, ref ulong rndState)
 		{
-			var time = s_timeOffset + TicksToMilliSeconds(ticks);
-			Low = NextUInt64(ref rndState);
-			High = ((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF);
+			var time = s_timeOffset + TicksToMilliSeconds(stopwatchTicks);
+
+			return new Ulid(
+				NextUInt64(ref rndState),
+				((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF)
+			);
 		}
 
-		private static double TicksToMilliSeconds(long stopwatchTicks)
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		public static Ulid Create(in DateTimeOffset dto)
 		{
-			return (double)stopwatchTicks * s_dInvMilliFreq;
+			return Create(dto, ref s_rndState);
 		}
 
-		public static void Create(in DateTimeOffset dto, out Ulid value)
-		{
-			Create(dto, ref s_rndState, out value);
-		}
-
-		public static void Create(in DateTimeOffset dto, ref ulong rndState, out Ulid value)
+		public static Ulid Create(in DateTimeOffset dto, ref ulong rndState)
 		{
 			var time = dto.ToUnixTimeMilliseconds();
-			value = new Ulid(
+			return new Ulid(
 				NextUInt64(ref rndState),
 				((ulong)time << 16) | (NextUInt64(ref rndState) & 0xFFFF)
 			);
 		}
 
-		public Ulid(ReadOnlySpan<char> fromString)
+		public static Ulid Create(ReadOnlySpan<char> fromString)
 		{
 #if DEBUG
 			if (fromString.Length < 26)
@@ -134,8 +129,7 @@ namespace UlidSharp
 				((ulong)DECODE[fromString[24]] << 5) |
 				((ulong)DECODE[fromString[25]]);
 
-			Low = low;
-			High = high;
+			return new Ulid(low, high);
 		}
 
 		public void AsString(Span<char> into)
@@ -292,6 +286,12 @@ namespace UlidSharp
 			s_rndState = (ulong)h1 ^ (ulong)h2 ^ (ulong)h3 ^ (ulong)h4 ^ (ulong)h5;
 
 			s_dInvMilliFreq = 1000.0 / (double)Stopwatch.Frequency;
+		}
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		private static double TicksToMilliSeconds(long stopwatchTicks)
+		{
+			return (double)stopwatchTicks * s_dInvMilliFreq;
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
